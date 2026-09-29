@@ -129,8 +129,18 @@ function authenticate(req, res) {
 // --- Habits ---------------------------------------------------------------
 
 const insertHabitStmt = db.prepare('INSERT INTO habits (user_id, name, created_at) VALUES (?, ?, ?)');
-const listHabitsStmt = db.prepare('SELECT id, name, created_at AS createdAt FROM habits WHERE user_id = ? ORDER BY id');
+const listHabitsStmt = db.prepare(
+  'SELECT id, name, created_at AS createdAt FROM habits WHERE user_id = ? ORDER BY id LIMIT ? OFFSET ?'
+);
 const findHabitOwnedStmt = db.prepare('SELECT * FROM habits WHERE id = ? AND user_id = ?');
+
+// Clamps a query-string number to a safe range, falling back to `def` if
+// missing or not a valid integer.
+function clampInt(raw, def, min, max) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isInteger(n)) return def;
+  return Math.min(max, Math.max(min, n));
+}
 
 async function handleCreateHabit(req, res, user) {
   const payload = await parseJsonBody(req, res);
@@ -143,8 +153,10 @@ async function handleCreateHabit(req, res, user) {
   return sendJSON(res, 201, { id: Number(info.lastInsertRowid), name });
 }
 
-function handleListHabits(req, res, user) {
-  return sendJSON(res, 200, listHabitsStmt.all(user.id));
+function handleListHabits(req, res, user, url) {
+  const limit = clampInt(url.searchParams.get('limit'), 50, 1, 200);
+  const offset = clampInt(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
+  return sendJSON(res, 200, listHabitsStmt.all(user.id, limit, offset));
 }
 
 // Ownership boundary: a habit that exists but belongs to someone else is
@@ -170,7 +182,7 @@ const insertCheckinStmt = db.prepare(
 );
 const findCheckinStmt = db.prepare('SELECT * FROM checkins WHERE habit_id = ? AND date = ?');
 const listCheckinsStmt = db.prepare(
-  'SELECT id, date, created_at AS createdAt FROM checkins WHERE habit_id = ? ORDER BY date DESC'
+  'SELECT id, date, created_at AS createdAt FROM checkins WHERE habit_id = ? ORDER BY date DESC LIMIT ? OFFSET ?'
 );
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -206,15 +218,30 @@ async function handleCreateCheckin(req, res, user, habitId) {
   }
 }
 
-function handleListCheckins(req, res, user, habitId) {
+function handleListCheckins(req, res, user, habitId, url) {
   const habit = requireOwnedHabit(res, habitId, user);
   if (!habit) return;
-  return sendJSON(res, 200, listCheckinsStmt.all(habit.id));
+  const limit = clampInt(url.searchParams.get('limit'), 50, 1, 200);
+  const offset = clampInt(url.searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER);
+  return sendJSON(res, 200, listCheckinsStmt.all(habit.id, limit, offset));
 }
 
 // --- Router -----------------------------------------------------------
 
 const server = http.createServer(async (req, res) => {
+  // CORS: allows the demo.html page (opened from your own computer, a
+  // different "origin" as far as the browser is concerned) to call this
+  // API. Doesn't weaken security -- every route still requires a valid
+  // bearer token; this only controls which browser pages are allowed to
+  // make the request at all.
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    return res.end();
+  }
+
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const parts = url.pathname.split('/').filter(Boolean);
@@ -235,13 +262,13 @@ const server = http.createServer(async (req, res) => {
         return await handleCreateHabit(req, res, user);
       }
       if (req.method === 'GET' && parts.length === 1) {
-        return handleListHabits(req, res, user);
+        return handleListHabits(req, res, user, url);
       }
       if (req.method === 'POST' && parts[2] === 'checkins' && parts.length === 3) {
         return await handleCreateCheckin(req, res, user, parts[1]);
       }
       if (req.method === 'GET' && parts[2] === 'checkins' && parts.length === 3) {
-        return handleListCheckins(req, res, user, parts[1]);
+        return handleListCheckins(req, res, user, parts[1], url);
       }
     }
 
