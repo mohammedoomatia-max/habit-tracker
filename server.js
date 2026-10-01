@@ -285,6 +285,10 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const parts = url.pathname.split('/').filter(Boolean);
 
+    if (req.method === 'GET' && parts[0] === 'health' && parts.length === 1) {
+      return sendJSON(res, 200, { status: 'ok', uptimeSeconds: Math.round(process.uptime()) });
+    }
+
     if (req.method === 'POST' && parts[0] === 'signup' && parts.length === 1) {
       if (!checkRateLimit(req, res)) return;
       return await handleSignup(req, res);
