@@ -126,6 +126,15 @@ async function main() {
   check('malformed date -> 400', badDate.status === 400);
   check('names the "date" field specifically', badDateBody.field === 'date');
 
+  console.log('\n5) Logout revokes the token (bonus: not one of the original checks)\n');
+  const carol = await signup(base, 'carol@example.com', 'correct-horse-3');
+  const workingCheck = await fetch(`${base}/habits`, { headers: { Authorization: `Bearer ${carol.body.token}` } });
+  check('token works before logout', workingCheck.status === 200);
+  const logoutRes = await fetch(`${base}/logout`, { method: 'POST', headers: { Authorization: `Bearer ${carol.body.token}` } });
+  check('POST /logout -> 200', logoutRes.status === 200);
+  const afterLogout = await fetch(`${base}/habits`, { headers: { Authorization: `Bearer ${carol.body.token}` } });
+  check('the old token is rejected after logout -> 401', afterLogout.status === 401);
+
   console.log(`\n${passed} passed, ${failed} failed\n`);
   server.close();
   fs.unlinkSync(TMP_DB);
