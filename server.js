@@ -156,6 +156,17 @@ function authenticate(req, res) {
 
 // --- Habits ---------------------------------------------------------------
 
+const revokeTokenStmt = db.prepare('UPDATE users SET token = ? WHERE id = ?');
+
+// Invalidates the caller's current token by replacing it with a fresh one
+// nobody has. There's no session store to clear -- the token itself *is*
+// the credential, so rotating it is what "logging out" means here.
+function handleLogout(req, res, user) {
+  const newToken = generateToken();
+  revokeTokenStmt.run(newToken, user.id);
+  return sendJSON(res, 200, { loggedOut: true });
+}
+
 const insertHabitStmt = db.prepare('INSERT INTO habits (user_id, name, created_at) VALUES (?, ?, ?)');
 const listHabitsStmt = db.prepare(
   'SELECT id, name, created_at AS createdAt FROM habits WHERE user_id = ? ORDER BY id LIMIT ? OFFSET ?'
@@ -284,6 +295,12 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Everything below requires a valid Bearer token.
+    if (parts[0] === 'logout' && parts.length === 1 && req.method === 'POST') {
+      const user = authenticate(req, res);
+      if (!user) return;
+      return handleLogout(req, res, user);
+    }
+
     if (parts[0] === 'habits') {
       const user = authenticate(req, res);
       if (!user) return; // 401 already sent
