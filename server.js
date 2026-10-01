@@ -181,6 +181,8 @@ function clampInt(raw, def, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
+const MAX_HABIT_NAME_LENGTH = 200;
+
 async function handleCreateHabit(req, res, user) {
   const payload = await parseJsonBody(req, res);
   if (payload === null) return;
@@ -188,8 +190,15 @@ async function handleCreateHabit(req, res, user) {
   if (typeof name !== 'string' || name.trim().length === 0) {
     return fail(res, 400, 'name', 'name is required');
   }
-  const info = insertHabitStmt.run(user.id, name, new Date().toISOString());
-  return sendJSON(res, 201, { id: Number(info.lastInsertRowid), name });
+  // Trim before storing so "Drink water" and "  Drink water  " don't become
+  // visibly-different rows, and cap the length so a caller can't store an
+  // arbitrarily large string in a field meant to be a short label.
+  const trimmed = name.trim();
+  if (trimmed.length > MAX_HABIT_NAME_LENGTH) {
+    return fail(res, 400, 'name', `name must be ${MAX_HABIT_NAME_LENGTH} characters or fewer`);
+  }
+  const info = insertHabitStmt.run(user.id, trimmed, new Date().toISOString());
+  return sendJSON(res, 201, { id: Number(info.lastInsertRowid), name: trimmed });
 }
 
 function handleListHabits(req, res, user, url) {
