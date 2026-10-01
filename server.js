@@ -290,6 +290,16 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
+  // Lightweight request logging: one line per request, after it finishes,
+  // so the logged status code is the real one actually sent. This is the
+  // only visibility into traffic this service had before -- there was no
+  // way to tell what was being hit, how often, or how it responded.
+  const startedAt = process.hrtime.bigint();
+  res.on('finish', () => {
+    const ms = Number(process.hrtime.bigint() - startedAt) / 1e6;
+    console.log(`${req.method} ${req.url} -> ${res.statusCode} (${ms.toFixed(1)}ms)`);
+  });
+
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const parts = url.pathname.split('/').filter(Boolean);
