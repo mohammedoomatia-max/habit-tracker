@@ -60,6 +60,34 @@ async function parseJsonBody(req, res) {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// --- Rate limiting (signup/login only) -----------------------------------
+//
+// A simple in-memory sliding window, keyed by client IP: at most
+// MAX_ATTEMPTS requests per WINDOW_MS. This is intentionally basic -- it
+// resets if the process restarts and doesn't share state across multiple
+// instances -- but it's a real, enforced limit rather than none at all,
+// which is what these two endpoints had before.
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_ATTEMPTS = 20;
+const attemptsByIp = new Map();
+
+function checkRateLimit(req, res) {
+  const ip = req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const attempts = (attemptsByIp.get(ip) || []).filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+
+  if (attempts.length >= RATE_LIMIT_MAX_ATTEMPTS) {
+    const retryAfterSeconds = Math.ceil((RATE_LIMIT_WINDOW_MS - (now - attempts[0])) / 1000);
+    res.setHeader('Retry-After', String(retryAfterSeconds));
+    fail(res, 429, 'rate_limit', `too many attempts, try again in ${retryAfterSeconds}s`);
+    return false;
+  }
+
+  attempts.push(now);
+  attemptsByIp.set(ip, attempts);
+  return true;
+}
+
 // --- Auth ---------------------------------------------------------------
 
 const findUserByEmailStmt = db.prepare('SELECT * FROM users WHERE email = ?');
@@ -247,9 +275,11 @@ const server = http.createServer(async (req, res) => {
     const parts = url.pathname.split('/').filter(Boolean);
 
     if (req.method === 'POST' && parts[0] === 'signup' && parts.length === 1) {
+      if (!checkRateLimit(req, res)) return;
       return await handleSignup(req, res);
     }
     if (req.method === 'POST' && parts[0] === 'login' && parts.length === 1) {
+      if (!checkRateLimit(req, res)) return;
       return await handleLogin(req, res);
     }
 
